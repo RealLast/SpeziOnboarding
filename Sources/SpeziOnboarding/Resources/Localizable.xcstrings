@@ -114,6 +114,7 @@
       }
     },
     "EXPORTED_TAG" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

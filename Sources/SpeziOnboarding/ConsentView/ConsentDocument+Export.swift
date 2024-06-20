@@ -9,11 +9,10 @@
 import PDFKit
 import PencilKit
 import SwiftUI
-
-
+import WebKit
 /// Extension of `ConsentDocument` enabling the export of the signed consent page.
 extension ConsentDocument {
-    #if !os(macOS)
+#if !os(macOS)
     /// As the `PKDrawing.image()` function automatically converts the ink color dependent on the used color scheme (light or dark mode),
     /// force the ink used in the `UIImage` of the `PKDrawing` to always be black by adjusting the signature ink according to the color scheme.
     private var blackInkSignatureImage: UIImage {
@@ -26,23 +25,22 @@ extension ConsentDocument {
                 transform: stroke.transform,
                 mask: stroke.mask
             )
-
+            
             updatedDrawing.strokes.append(blackStroke)
         }
-
-        #if os(iOS)
+        
+#if os(iOS)
         let scale = UIScreen.main.scale
-        #else
+#else
         let scale = 3.0 // retina scale is default
-        #endif
-
+#endif
+        
         return updatedDrawing.image(
             from: .init(x: 0, y: 0, width: signatureSize.width, height: signatureSize.height),
             scale: scale
         )
     }
-    #endif
-    
+#endif
     
     /// Creates a representation of the consent form that is ready to be exported via the SwiftUI `ImageRenderer`.
     ///
@@ -54,45 +52,7 @@ extension ConsentDocument {
     /// - Note: This function avoids the use of asynchronous operations.
     /// Asynchronous tasks are incompatible with SwiftUI's `ImageRenderer`,
     /// which expects all rendering processes to be synchronous.
-    private func exportBody(markdown: AttributedString) -> some View {
-        VStack {
-            if exportConfiguration.includingTimestamp {
-                HStack {
-                    Spacer()
-
-                    Text("EXPORTED_TAG", bundle: .module)
-                        + Text(verbatim: ": \(DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short))")
-                }
-                .font(.caption)
-                .padding()
-            }
-            
-            OnboardingTitleView(title: exportConfiguration.consentTitle)
-            
-            Text(markdown)
-                .padding()
-            
-            Spacer()
-            
-            ZStack(alignment: .bottomLeading) {
-                SignatureViewBackground(name: name, backgroundColor: .clear)
-
-                #if !os(macOS)
-                Image(uiImage: blackInkSignatureImage)
-                #else
-                Text(signature)
-                    .padding(.bottom, 32)
-                    .padding(.leading, 46)
-                    .font(.custom("Snell Roundhand", size: 24))
-                #endif
-            }
-                #if !os(macOS)
-                .frame(width: signatureSize.width, height: signatureSize.height)
-                #else
-                .padding(.horizontal, 100)
-                #endif
-        }
-    }
+    
     
     /// Exports the signed consent form as a `PDFDocument` via the SwiftUI `ImageRenderer`.
     ///
@@ -102,41 +62,135 @@ extension ConsentDocument {
     @MainActor
     func export() async -> PDFDocument? {
         let markdown = await asyncMarkdown()
-        
+
         let markdownString = (try? AttributedString(
             markdown: markdown,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(String(localized: "MARKDOWN_LOADING_ERROR", bundle: .module))
-        
-        let renderer = ImageRenderer(content: exportBody(markdown: markdownString))
-        let paperSize = CGSize(
+
+        let pageSize = CGSize(
             width: exportConfiguration.paperSize.dimensions.width,
             height: exportConfiguration.paperSize.dimensions.height
         )
-        renderer.proposedSize = .init(paperSize)
-        
+
+        let pages = paginatedViews(markdown: markdownString)
+
+        print("NumPages: \(pages.count)")
         return await withCheckedContinuation { continuation in
-            renderer.render { _, context in
-                var box = CGRect(origin: .zero, size: paperSize)
-                
-                /// Create in-memory `CGContext` that stores the PDF
-                guard let mutableData = CFDataCreateMutable(kCFAllocatorDefault, 0),
-                      let consumer = CGDataConsumer(data: mutableData),
-                      let pdf = CGContext(consumer: consumer, mediaBox: &box, nil) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                pdf.beginPDFPage(nil)
-                pdf.translateBy(x: 0, y: 0)
-                
-                context(pdf)
-                
-                pdf.endPDFPage()
-                pdf.closePDF()
-                
-                continuation.resume(returning: PDFDocument(data: mutableData as Data))
+            guard let mutableData = CFDataCreateMutable(kCFAllocatorDefault, 0),
+                  let consumer = CGDataConsumer(data: mutableData),
+                  let pdf = CGContext(consumer: consumer, mediaBox: nil, nil) else {
+                continuation.resume(returning: nil)
+                return
             }
+
+            for page in pages {
+                pdf.beginPDFPage(nil)
+                let renderer = UIGraphicsImageRenderer(bounds: CGRect(origin: .zero, size: pageSize))
+                let image = renderer.image { ctx in
+                    let controller = UIHostingController(rootView: page)
+                    controller.view.frame = CGRect(origin: .zero, size: pageSize)
+                    controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+                }
+                if let cgImage = image.cgImage {
+                    pdf.draw(cgImage, in: CGRect(origin: .zero, size: pageSize))
+                }
+                pdf.endPDFPage()
+            }
+
+            pdf.closePDF()
+            continuation.resume(returning: PDFDocument(data: mutableData as Data))
         }
     }
+    
+    private func paginatedViews(markdown: AttributedString) -> [AnyView] 
+    {
+        var pages = [AnyView]()
+        var remainingMarkdown = markdown
+        let pageSize = CGSize(width: exportConfiguration.paperSize.dimensions.width, height: exportConfiguration.paperSize.dimensions.height)
+        let headerHeight: CGFloat = 150  // Adjust according to your title and top padding
+        let footerHeight: CGFloat = 150  // Adjust according to your signature and bottom padding
+
+        while !remainingMarkdown.unicodeScalars.isEmpty {
+            let (currentPageContent, nextPageContent) = split(markdown: remainingMarkdown, pageSize: pageSize, headerHeight: headerHeight, footerHeight: footerHeight)
+
+            let currentPage: AnyView = AnyView(
+                VStack {
+                    if pages.isEmpty {  // First page
+                        OnboardingTitleView(title: exportConfiguration.consentTitle)
+                    }
+
+                    Text(currentPageContent)
+                        .padding()
+
+                    Spacer()
+
+                    if nextPageContent.unicodeScalars.isEmpty {  // Last page
+                        ZStack(alignment: .bottomLeading) {
+                            SignatureViewBackground(name: name, backgroundColor: .clear)
+
+                            #if !os(macOS)
+                            Image(uiImage: blackInkSignatureImage)
+                            #else
+                            Text(signature)
+                                .padding(.bottom, 32)
+                                .padding(.leading, 46)
+                                .font(.custom("Snell Roundhand", size: 24))
+                            #endif
+                        }
+                        .padding(.bottom, footerHeight)
+                    }
+                }
+                .frame(width: pageSize.width, height: pageSize.height)
+            )
+
+            pages.append(currentPage)
+            remainingMarkdown = nextPageContent
+        }
+
+        return pages
+    }
+
+    private func split(markdown: AttributedString, pageSize: CGSize, headerHeight: CGFloat, footerHeight: CGFloat) -> (AttributedString, AttributedString) 
+    {
+        let contentHeight = pageSize.height - headerHeight - footerHeight
+        var currentPage = AttributedString()
+        var remaining = markdown
+
+        let textStorage = NSTextStorage(attributedString: NSAttributedString(markdown))
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: CGSize(width: pageSize.width, height: contentHeight))
+        layoutManager.addTextContainer(textContainer)
+        textStorage.addLayoutManager(layoutManager)
+
+        var index = 0
+        var accumulatedHeight: CGFloat = 0
+        var lastFitRange = NSRange(location: 0, length: 0)
+
+        while index < textStorage.length {
+            print("Index \(index) \(textStorage.length)")
+            let range = NSRange(location: index, length: textStorage.length - index)
+            let glyphRange = layoutManager.glyphRange(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+
+            if usedRect.size.height > contentHeight {
+                if lastFitRange.length == 0 {
+                    // Handle case where a single line is taller than page height
+                    lastFitRange = NSRange(location: index, length: 1)
+                    index += 1
+                }
+                break
+            }
+
+            lastFitRange = glyphRange
+            index += NSMaxRange(glyphRange)
+            accumulatedHeight = usedRect.size.height
+        }
+
+        currentPage = AttributedString(textStorage.attributedSubstring(from: lastFitRange))
+        remaining = AttributedString(textStorage.attributedSubstring(from: NSRange(location: lastFitRange.length, length: textStorage.length - lastFitRange.length)))
+
+        return (currentPage, remaining)
+    }
+
 }

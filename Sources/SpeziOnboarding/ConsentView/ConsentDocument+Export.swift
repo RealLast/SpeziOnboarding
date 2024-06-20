@@ -86,15 +86,25 @@ extension ConsentDocument {
 
             for page in pages {
                 pdf.beginPDFPage(nil)
-                let renderer = UIGraphicsImageRenderer(bounds: CGRect(origin: .zero, size: pageSize))
-                let image = renderer.image { ctx in
-                    let controller = UIHostingController(rootView: page)
-                    controller.view.frame = CGRect(origin: .zero, size: pageSize)
-                    controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
-                }
-                if let cgImage = image.cgImage {
-                    pdf.draw(cgImage, in: CGRect(origin: .zero, size: pageSize))
-                }
+               
+                let hostingController = UIHostingController(rootView: page)
+                 hostingController.view.frame = CGRect(origin: .zero, size: pageSize)
+
+                 let renderer = UIGraphicsImageRenderer(bounds: hostingController.view.bounds)
+                 let image = renderer.image { ctx in
+                     hostingController.view.drawHierarchy(in: hostingController.view.bounds, afterScreenUpdates: true)
+                 }
+
+                pdf.saveGState()
+
+                pdf.translateBy(x: 0, y: pageSize.height)
+                pdf.scaleBy(x: 1.0, y: -1.0)
+
+                hostingController.view.layer.render(in: pdf)
+
+                pdf.restoreGState()
+                 
+                
                 pdf.endPDFPage()
             }
 
@@ -108,8 +118,8 @@ extension ConsentDocument {
         var pages = [AnyView]()
         var remainingMarkdown = markdown
         let pageSize = CGSize(width: exportConfiguration.paperSize.dimensions.width, height: exportConfiguration.paperSize.dimensions.height)
-        let headerHeight: CGFloat = 150  // Adjust according to your title and top padding
-        let footerHeight: CGFloat = 150  // Adjust according to your signature and bottom padding
+        let headerHeight: CGFloat = 150
+        let footerHeight: CGFloat = 150
 
         while !remainingMarkdown.unicodeScalars.isEmpty {
             let (currentPageContent, nextPageContent) = split(markdown: remainingMarkdown, pageSize: pageSize, headerHeight: headerHeight, footerHeight: footerHeight)

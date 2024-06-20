@@ -175,30 +175,16 @@ extension ConsentDocument {
 
         var index = 0
         var accumulatedHeight: CGFloat = 0
-        var lastFitRange = NSRange(location: 0, length: 0)
+        var maximumRange = NSRange(location: 0, length: 0)
+       
+        let glyphRange = layoutManager.glyphRange(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
 
-        while index < textStorage.length {
-            print("Index \(index) \(textStorage.length)")
-            let range = NSRange(location: index, length: textStorage.length - index)
-            let glyphRange = layoutManager.glyphRange(for: textContainer)
-            let usedRect = layoutManager.usedRect(for: textContainer)
-
-            if usedRect.size.height > contentHeight {
-                if lastFitRange.length == 0 {
-                    // Handle case where a single line is taller than page height
-                    lastFitRange = NSRange(location: index, length: 1)
-                    index += 1
-                }
-                break
-            }
-
-            lastFitRange = glyphRange
-            index += NSMaxRange(glyphRange)
-            accumulatedHeight = usedRect.size.height
-        }
-
-        currentPage = AttributedString(textStorage.attributedSubstring(from: lastFitRange))
-        remaining = AttributedString(textStorage.attributedSubstring(from: NSRange(location: lastFitRange.length, length: textStorage.length - lastFitRange.length)))
+        maximumRange = glyphRange
+        index == NSMaxRange(glyphRange)
+     
+        currentPage = AttributedString(textStorage.attributedSubstring(from: maximumRange))
+        remaining = AttributedString(textStorage.attributedSubstring(from: NSRange(location: maximumRange.length, length: textStorage.length - maximumRange.length)))
 
         return (currentPage, remaining)
     }

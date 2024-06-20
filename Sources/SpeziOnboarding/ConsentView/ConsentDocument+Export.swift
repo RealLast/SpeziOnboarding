@@ -173,15 +173,8 @@ extension ConsentDocument {
         layoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(layoutManager)
 
-        var index = 0
-        var accumulatedHeight: CGFloat = 0
-        var maximumRange = NSRange(location: 0, length: 0)
-       
-        let glyphRange = layoutManager.glyphRange(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
-
-        maximumRange = glyphRange
-        index == NSMaxRange(glyphRange)
+        var accumulatedHeight: CGFloat = 0       
+        let maximumRange = layoutManager.glyphRange(for: textContainer)
      
         currentPage = AttributedString(textStorage.attributedSubstring(from: maximumRange))
         remaining = AttributedString(textStorage.attributedSubstring(from: NSRange(location: maximumRange.length, length: textStorage.length - maximumRange.length)))

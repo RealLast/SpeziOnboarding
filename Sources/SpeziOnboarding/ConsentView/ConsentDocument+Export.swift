@@ -6,8 +6,9 @@
 // SPDX-License-Identifier: MIT
 //
 
-import PDFKit
+import TPPDF
 import PencilKit
+import PDFKit
 import SwiftUI
 
 
@@ -54,7 +55,7 @@ extension ConsentDocument {
     /// - Note: This function avoids the use of asynchronous operations.
     /// Asynchronous tasks are incompatible with SwiftUI's `ImageRenderer`,
     /// which expects all rendering processes to be synchronous.
-    private func exportBody(markdown: AttributedString) -> some View {
+    private func exportHeader() -> some View {
         VStack {
             if exportConfiguration.includingTimestamp {
                 HStack {
@@ -68,11 +69,12 @@ extension ConsentDocument {
             }
             
             OnboardingTitleView(title: exportConfiguration.consentTitle)
+        }
+    }
+    
+    private func exportSignature() -> some View {
+        VStack {
             
-            Text(markdown)
-                .padding()
-            
-            Spacer()
             
             ZStack(alignment: .bottomLeading) {
                 SignatureViewBackground(name: name, backgroundColor: .clear)
@@ -94,13 +96,33 @@ extension ConsentDocument {
         }
     }
     
+    @MainActor
+    func renderViewToImage(view: some View) async -> UIImage {
+        let renderer = ImageRenderer(content: view)
+        
+        let uiImage = renderer.uiImage
+        return uiImage!
+    }
+    
+    func headerToImage() async -> UIImage {
+        let content = exportHeader()
+        return await renderViewToImage(view: content)
+    }
+    
+    func signatureToImage() async -> UIImage {
+        let content = exportSignature()
+        return await renderViewToImage(view: content)
+    }
+    
+    
+    
     /// Exports the signed consent form as a `PDFDocument` via the SwiftUI `ImageRenderer`.
     ///
     /// Renders the `PDFDocument` according to the specified ``ConsentDocument/ExportConfiguration``.
     ///
     /// - Returns: The exported consent form in PDF format as a PDFKit `PDFDocument`
     @MainActor
-    func export() async -> PDFDocument? {
+    func export() async -> PDFKit.PDFDocument? {
         let markdown = await asyncMarkdown()
         
         let markdownString = (try? AttributedString(
@@ -108,35 +130,30 @@ extension ConsentDocument {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(String(localized: "MARKDOWN_LOADING_ERROR", bundle: .module))
         
-        let renderer = ImageRenderer(content: exportBody(markdown: markdownString))
-        let paperSize = CGSize(
-            width: exportConfiguration.paperSize.dimensions.width,
-            height: exportConfiguration.paperSize.dimensions.height
-        )
-        renderer.proposedSize = .init(paperSize)
+        // Create your TPPDF document
+        let document = TPPDF.PDFDocument(format: .usLetter)
         
-        return await withCheckedContinuation { continuation in
-            renderer.render { _, context in
-                var box = CGRect(origin: .zero, size: paperSize)
+        let header = await headerToImage()
+        let signature = await signatureToImage()
+        
+        document.add(image: PDFImage(image: header))
+        document.add(attributedText: NSAttributedString(markdownString))
+        document.add(image: PDFImage(image: signature))
+                     
+        let generator = PDFGenerator(document: document)
+        
+        let data = try? generator.generateData()
+            // Initialize PDFKit.PDFDocument with the generated data
+            if let pdfKitDocument = PDFKit.PDFDocument(data: data!) {
+                // Now you can use your PDFKit.PDFDocument
+                print("PDFKit document created successfully")
                 
-                /// Create in-memory `CGContext` that stores the PDF
-                guard let mutableData = CFDataCreateMutable(kCFAllocatorDefault, 0),
-                      let consumer = CGDataConsumer(data: mutableData),
-                      let pdf = CGContext(consumer: consumer, mediaBox: &box, nil) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
+                return pdfKitDocument
                 
-                pdf.beginPDFPage(nil)
-                pdf.translateBy(x: 0, y: 0)
-                
-                context(pdf)
-                
-                pdf.endPDFPage()
-                pdf.closePDF()
-                
-                continuation.resume(returning: PDFDocument(data: mutableData as Data))
+            } else {
+                return nil
             }
-        }
+
     }
 }
+

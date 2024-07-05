@@ -130,7 +130,6 @@ extension ConsentDocument {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(String(localized: "MARKDOWN_LOADING_ERROR", bundle: .module))
         
-        // Create your TPPDF document
         let document = TPPDF.PDFDocument(format: .usLetter)
         
         let header = await headerToImage()
@@ -142,18 +141,16 @@ extension ConsentDocument {
                      
         let generator = PDFGenerator(document: document)
         
-        let data = try? generator.generateData()
-            // Initialize PDFKit.PDFDocument with the generated data
-            if let pdfKitDocument = PDFKit.PDFDocument(data: data!) {
-                // Now you can use your PDFKit.PDFDocument
+        if let data = try? generator.generateData() {
+            if let pdfKitDocument = PDFKit.PDFDocument(data: data) {
                 print("PDFKit document created successfully")
-                
                 return pdfKitDocument
-                
             } else {
                 return nil
             }
-
+        } else {
+            return nil
+        }
     }
 }
 
